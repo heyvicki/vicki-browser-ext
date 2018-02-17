@@ -1,0 +1,392 @@
+ifdef::env-github[]
+:tip-caption: :bulb:
+:note-caption: :information_source:
+:important-caption: :heavy_exclamation_mark:
+:caution-caption: :fire:
+:warning-caption: :warning:
+endif::[]
+:toc:
+:toc-placement!:
+:toclevels: 3
+:toc-title:
+:args: Input/Output
+:example: Example usage
+
+= VickiScript Developer Guide
+
+Learn everything about writing scripts for Vicki and teach Alexa new skills that controls your web browser.
+We call these scripts "VickiScript".
+
+This document expects the reader to be a proficent javascript developer and is focused on API definitions.
+
+toc::[]
+
+==  Introduction to VickiScript
+VickiScripts are small javascript code that are invoked to process requests from Alexa while running inside of a web browser. See the example below and the comments to the right to get an idea:
+
+```javascript
+/// ==VickiScript==                               // <<< 1. Declare this is a VickiScript (Metablock)
+/// @name Get Started                             // <<< 2. Name your script
+/// @utterance Ask $invocation to get started     // <<< 3. Guide users on how to use your script
+/// ==/VickiScript==                              // <<< 4. End metablock
+
+$vs.listen(async (request, response) => {         // <<< 5. Start listening for Alexa requests.
+  if (request.utterance !== 'get started') {      // <<< 6. Check if we should handle the request
+    return;                                       // <<< 7. If not, just bail out
+  }
+
+  const url = 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program';
+  await browser.tabs.create({ url });            // <<< 8. Use browser extension to open a tab
+  response.say('Opening hello world').send();    // <<< 9. Respond back to the request and
+                                                 //        make Alexa talk
+});
+```
+
+See link:#request[Request], link:#response[Response], and link:#browser[browser] for their API.
+
+===  Execution Environment
+Vicki will run your script inside of a WebWorker and have a limited set of API's available to use. The major API callouts are `$vs` which interacts with Vicki and `browser` which interacts with the browser and all the pages within it (see API reference for details).
+
+=  Metablock
+Metablock allows you to describe your script to Vicki. It looks like this in the beginning of your script:
+```javascript
+/// ==VickiScript==
+/// @name Get Started
+/// @utterance Ask $invocation to get started
+/// ==/VickiScript==
+```
+
+The requirements are:
+
+* Must start with line: `// ==VickiScript==`
+** Must be in beginning of file before any other code (excluding comment).
+* Must include a @name property: `// @name Script Name`
+* Must end with line: `// ==/VickiScript==`
+
+==  @description
+Detailed description of the script, multiple description fields are concatted.
+
+==  @icon
+Http URL to an image to show, image can be anything browser can draw inside image tag and is expected to be of size at least 32x32 pixels.
+
+==  @id
+Optional field to show a different name in console logs. Limited to the regex `/[0-9a-z_\-\.]/`. If not defined, will default to name.
+
+==  @name
+Name that will be displayed by default everywhere. This is the only mandatory field.
+
+
+==  @updateUrl
+List of HTTPS urls that will host the script for updating. Vicki will hit these URL's to update the script (check @version to meet requirement). ALL urls defined here must have latest version of the script as Vicki will load balance amongst them.
+
+
+==  @utterance
+Defines a example utterances user can say to invoke the script. Supports placeholder `$invocation` to let Vicki insert its own invocation name.
+
+Define this multiple time to provide multiple examples, order is kept.
+
+*{example}*
+```javascript
+/// @utterance Ask $invocation to get download status
+/// @utterance Tell $invocation to pause download
+/// @utterance Ask $invocation what is my name
+```
+
+==  @version
+Integer value defining the current version number of this file. Defaults to 1.
+
+When you want users to update the script, this number must be defined and incremented.
+
+=  API Reference
+==  $vs.listen(callback: Function)
+Start listening for Alexa requests, the callback is invoked once per request session.
+It will not be invoked if user responds back to a query from Vicki that was requested by a script.
+
+*Callback {args}*
+
+Callback Function: `(request: link:#request[Request], response: link:#response[Response]): Promise<void>`
+
+> `request: link:#request[Request]` - Request to be processed.
+>
+> `response: link:#response[Response]` - Response to send back to Alexa.
+>
+> Return a promise for when execution is complete. The promise should only be fulfilled after no further response is expected.
+
+*{example}*
+```javascript
+$vs.listen(async (request, response) => {
+  if (request.utterance !== 'hello world') {
+    return;
+  }
+
+  response.say('hello!').send();
+});
+```
+
+==  Request
+
+
+===  pass: number
+When all scripts skip a request then another pass is done on all the scripts with the pass number incremented. This allows scripts to lower their threshold for processing a request.
+
+There are a total of 3 passes, first pass is 0.
+
+*{example}*
+```javascript
+if (request.pass === 0 && request.utterance === 'hello world') {
+  console.log('matched!');
+} else if (request.pass > 0 && request.startsWith('hello ')) {
+  console.log('good enough!');
+}
+```
+
+===  raw: link:https://developer.amazon.com/docs/custom-skills/request-and-response-json-reference.html#request-body-syntax[AlexaRequest]
+
+Raw packet from Alexa on what the users request was. See Amazon Alexa's documentation on the specification.
+
+See Alexa's link:https://developer.amazon.com/docs/custom-skills/request-and-response-json-reference.html#request-body-syntax[Request and Response JSON Reference]` for the request API.
+
+*{example}*
+```javascript
+if (request.raw.request.type === 'LaunchRequest') {
+  console.log('Received a launch request');
+}
+```
+
+===  utterance: string
+The parsed utterance that user requested, this will be a stripped down version of what user says. It will always be lowercased and trimmed of outer white spaces. If user says `Alexa ask web browser to scroll down` then the utterance might be `scroll down`.
+
+This may be an empty string if Alexa interpreted the utterance as a special intent, for example if the user says `Stop`.
+
+Things to consider while reading this property:
+
+. A phonetically pronounced sound may have different meaning based on context, and Alexa might return an unexpected text. For example "right" and "write" sounds the same and it's unpredictable which one is returned.
+. User can say ask the same things in different ways, even after being trained. Eg:
+   - `Alexa ask web browser what is my download status?`
+   - `Alexa tell web browser to get my download status.`
+   - `Alexa ask web browser what am I downloading?`
+   - `Alexa ask web browser am I downloading anything?`
+
+*{example}*
+```javascript
+// Use regex to support many variations of what user might say
+const match = request.utterance.match(/^scroll (?:to the )?(down|up|bottom|top)$/);
+if (match) {
+  console.log(`Requested to scroll to ${match[1]}`);
+}
+```
+
+==  Response
+=== raw(response: link:https://developer.amazon.com/docs/custom-skills/request-and-response-json-reference.html#response-format[AlexaResponse])
+Send a response back using packet that Alexa understands.
+
+See Alexa's link:https://developer.amazon.com/docs/custom-skills/request-and-response-json-reference.html#response-format[Request and Response JSON Reference]` for the response API.
+
+
+*{example}*
+```javascript
+response.raw({
+  version: "1.0",
+  response: {
+    outputSpeech: {
+    type: "PlainText",
+    text: "My raw response"
+    },
+    shouldEndSession: true
+  }
+});
+```
+
+
+===  reprompt(content: string, type: string): link:#response[Response]
+Same as *say* but used for reprompt if user doesn't respond during a sendAndListen.
+
+*{args}*
+
+> `content: string` - Content of what to say. Be aware that final payload must be less than 6000 bytes.
+>
+> `type: string` - Type of content, supported values: 'PlainText', 'SSML'. Defaults to 'PlainText'.
+>
+> Returns `link:#response[Response]`, same instance to enable chaining.
+
+*{example}*
+
+See *sendAndListen*.
+
+===  say(content: string, type: string): link:#response[Response]
+Sets what to verbally say on a response when send is invoked.
+
+See documentation for SSML in Alexa's link:https://developer.amazon.com/docs/custom-skills/speech-synthesis-markup-language-ssml-reference.html[Speech Synthesis Markup Language Reference].
+
+*{args}*
+
+> `content: string` - Content of what to say. Be aware that final payload must be less than 6000 bytes.
+>
+> `type: string` - Type of content, supported values: 'PlainText', 'SSML'. Defaults to 'PlainText'.
+>
+> Returns `link:#response[Response]`, same instance to enable chaining.
+
+*{example}*
+```javascript
+// Say hello
+response.say('Hello!').send();
+
+// Say hello with a pause using SSML.
+response.say('<speak>Hello <break time="2s"/> World!</speak>', 'SSML').send();
+```
+
+===  send()
+Send a response back to Alexa, this will end the session. Setup what content to send back by calling <b>say</b> before invoking this.
+
+*{example}*
+```javascript
+if (request.utterance === 'hello world') {
+  return response.say('hello!').send();
+}
+```
+
+===  sendAndListen(): Promise<link:#request[Request]>
+Sends a prompt back to Alexa and waits for user to respond back. Setup what content to send back by calling *say* and *reprompt* before invoking this.
+
+After the promise is fulfilled, this response object is reset and a response becomes pending.
+
+*{args}*
+
+> Returns `Promise<link:#request[Request]>` which contains the users response. If user does not respond, it's still considered a request with cancel intent. The promise is fulfilled when user responds back.
+
+*{example}*
+```javascript
+if (request.utterance !== 'knock knock') {
+  return;
+}
+
+request = await response
+  .say('who is there?')
+  .reprompt('I said who is there?')
+  .sendAndListen();
+
+// At this point the request is the response back from the user
+// and the same response object is expecting a new send.
+if (request.utterance === 'vicki') {
+  response.say('come on in!').send();
+} else {
+  response.say(`${request.utterance} who?`).send();
+}
+```
+
+==  $vs.utils
+Pre-packaged set of helper functions to help write scripts.
+
+===  $vs.utils.text.parseNumber(utterance: string): number
+Parse a numerical value from an utterance.
+
+*{args}*
+
+> `utterance: string` - Utterance to parse for number
+>
+> Returns number from a utterance string, returns NaN if a number is not found.
+
+*{example}*
+```javascript
+const utterance = "five hundred and eleven";
+const num = $vs.utils.text.parseNumber(utterance);
+console.log(num); // Will log 511
+```
+
+===  $vs.utils.vui.sayLong(opts: SayLongOptions): Promise<void>
+
+Because Response.say has a upper limit, longer responses can be made using this. There is no upper bound here, Alexa will be sent the long string in chunks.
+
+*{args}*
+
+SayLongOptions properties:
+
+> `content: string` - Content to respond back, no size limit. Only PlainText, no SSML allowed.
+>
+> `response: link:#response[Response]` - Response object to use.
+>
+> `prompt: string` - Optional. Prompt for continuation.
+>
+> `reprompt: string` - Optional. Reprompt for continuation.
+
+Promise returns only after all communcation ends.
+
+===  $vs.utils.vui.select(opts: SelectOptions): Promise<number|null>
+Give the user a list of strings to pick from by displaying it onto the UI.
+
+*{args}*
+
+SelectOptions properties:
+
+> `response: link:#response[Response]` - Response object to use.
+>
+> `tabId: number` - ID of the tab to show the select UI in. This can be
+acquired from browser extensions api.
+>
+> `options: string[]` - Array of options to show to the user in the UI.
+>
+> `prompt: string` - Optional. What to verbally ask when showing the select options.
+>
+> `reprompt: string` - Optional. Same as prompt but for the reprompt.
+>
+> `title - string` - Optional. Title to show on the UI.
+
+A promise that is fulfilled after the user responds or fails to respond. The promise returns the index of the option that was selected on success, or null on failure cases.
+
+==  browser
+Limited set of Web Extensions API is available within the execution environment. This enables you to interact with the browser. This is the same as chrome's extension API but with Promise instead of callback and `browser` instead of `chrome` as the ingress.
+
+Supported namespaces:
+
+* bookmarks
+* downloads
+* history
+* sessions
+* storage
+* system
+* tabs
+* topSites
+* webNavigation
+* windows
+
+See API reference from others to learn more:
+
+* link:https://developer.chrome.com/extensions/api_index[Chrome Extensions API reference]
+* link:https://developer.mozilla.org/en-US/Add-ons/WebExtensions/API[Firefox Web Extensions API reference]
+
+*{example}*
+```javascript
+// Reload the focused tab
+const tab = (await browser.tabs.query({ active: true, currentWindow: true }))[0];
+if (!tab) {
+  return;
+}
+
+await browser.tabs.reload(tab.id, { bypassCache: true });
+```
+
+Note: Vicki is proxying all requests to browser and thus some API's may misbehave, do let us know.
+
+=  Debugging your script
+
+==  Simulator
+You can launch a request simulator when editing your script. This helps simulate user utterance through text as if Alexa had requested them while also enabling you to always focus on a tab before execution if necessary.
+
+Unfortunately, your console logs won't show up in the simulator, use your browsers developer tools for that.
+
+===  Developer Tools
+Use your browsers developer tools to debug your vickiscript, it will show up as a WebWorker inside Vicki's background page.
+
+*On Chrome*
+
+. Open your web browser to link:chrome://extensions/[chrome://extensions/]
+. Under "Vicki" and next to "Inspect views:", click "res/html/background.html"
+. Your script will be loaded and logging. Search for your scripts name in the console to see where it's files are hosted.
+
+==  console.log
+You can see all your `console.log` by following the Developer Tools instruction. `console.log` will always prefix the name of your script in the log, this will help you distinguish it from other scripts that Vicki is running.
+
+=  Distributing your script
+Vicki does not have an official script distribution portal; however it does make it easy to share a script with others. Just store your script with the suffix ".vicki.js" and share it on the internet. Whenever a ".vicki.js" file is opened in the web browser, Vicki will prompt the user to install it.
+
+Feel free to share your script on popular code repository sites like github.
